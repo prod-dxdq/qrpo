@@ -1,0 +1,8 @@
+name: deploy-webapp
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo 'Add your Azure deployment steps here.'

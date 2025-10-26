@@ -1,0 +1,3 @@
+-- Starter schema (extend as needed)
+-- CREATE TABLE assets (ticker VARCHAR(10) PRIMARY KEY, name VARCHAR(200));
+-- CREATE TABLE bars (ticker VARCHAR(10), dt DATE, close FLOAT, volume BIGINT, PRIMARY KEY(ticker, dt));
