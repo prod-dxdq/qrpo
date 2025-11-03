@@ -18,10 +18,16 @@ Includes VS Code workspace and Windows PowerShell setup script.
 
 ## Run
 **Backend**
-```
+```powershell
 cd backend
 .\.venv\Scripts\Activate.ps1
+$env:PYTHONPATH="$pwd"
 uvicorn api.main:app --reload --port 8000
+```
+
+Or in one line:
+```powershell
+cd backend; .\.venv\Scripts\Activate.ps1; $env:PYTHONPATH="$pwd"; uvicorn api.main:app --reload --port 8000
 ```
 
 **Frontend**
