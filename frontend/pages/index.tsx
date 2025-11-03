@@ -1,4 +1,12 @@
 import { useEffect, useState } from 'react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import dynamic from 'next/dynamic';
+
+// Dynamically import BlochViewer to avoid SSR issues with Three.js
+const BlochViewer = dynamic(() => import('../components/BlochViewer'), { 
+  ssr: false,
+  loading: () => <div className="h-80 bg-gradient-to-br from-gray-100 to-gray-200 rounded-xl shadow-inner p-2 flex items-center justify-center"><div className="text-gray-600">Loading...</div></div>
+});
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -13,12 +21,19 @@ export default function Home() {
   const [fftStats, setFftStats] = useState<any>(null);
   const [classical, setClassical] = useState<any>(null);
   const [quantum, setQuantum] = useState<any>(null);
+  const [quantumState, setQuantumState] = useState<any>(null);
+  const [rfResult, setRfResult] = useState<any>(null);
+  const [stockTicker, setStockTicker] = useState<string>('SPY');
+  const [simData, setSimData] = useState<any>(null);
+  const [portfolioTickers, setPortfolioTickers] = useState<string>('TSLA,NVDA,SPY,AMD');
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
   const [loading, setLoading] = useState<string>('');
+  const [loadingSim, setLoadingSim] = useState(false);
 
   // Tabs and sidebar state
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<string>('');
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ signals: true, strategies: true });
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({ signals: true, strategies: true, ml: true });
 
   // Brand palette
   const colors = ['#118DFF', '#12239E', '#E66C37', '#6B007B'];
@@ -100,6 +115,75 @@ export default function Home() {
     } finally { setLoading(''); }
   };
 
+  const runStockAnalysis = async () => {
+    try {
+      setLoading('stock');
+      const res = await fetch(`${API}/stock/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker: stockTicker, period: '1mo' })
+      });
+      const data = await res.json();
+      
+      if (!res.ok || data.error) {
+        alert(`Error: ${data.error || data.message || 'Failed to analyze stock'}`);
+        return;
+      }
+      
+      setRfResult(data);
+      openTab('stock');
+    } finally { setLoading(''); }
+  };
+
+  const loadQuantumState = async () => {
+    try {
+      setLoading('quantumState');
+      const res = await fetch(`${API}/quantum/state?n=4`);
+      const data = await res.json();
+      setQuantumState(data);
+    } catch (error) {
+      console.error('Failed to load quantum state:', error);
+      alert('Failed to load quantum state visualization');
+    } finally {
+      setLoading('');
+    }
+  };
+
+  const runSimulation = async (customTickers?: string) => {
+    try {
+      setLoadingSim(true);
+      const tickersToUse = customTickers || portfolioTickers;
+      const tickerCount = tickersToUse.split(',').length;
+      const equalWeight = (1 / tickerCount).toFixed(2);
+      const weights = Array(tickerCount).fill(equalWeight).join(',');
+      
+      const res = await fetch(`${API}/simulate/portfolio?tickers=${encodeURIComponent(tickersToUse)}&weights=${weights}`);
+      const data = await res.json();
+      
+      if (data.error) {
+        alert(`Error: ${data.error}`);
+        return;
+      }
+      
+      setSimData(data);
+    } finally {
+      setLoadingSim(false);
+    }
+  };
+
+  // Auto-refresh effect for real-time updates
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (autoRefresh && simData) {
+      interval = setInterval(() => {
+        runSimulation(portfolioTickers);
+      }, 5000); // Refresh every 5 seconds
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [autoRefresh, portfolioTickers, simData]);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
       {/* Header */}
@@ -108,7 +192,7 @@ export default function Home() {
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-sky-400 via-indigo-500 to-violet-600 shadow-lg shadow-violet-500/30" />
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Smart Investment Dashboard</h1>
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Quantum RF Portfolio Optimizer</h1>
               <div className="mt-1">
                 <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${health === 'ok' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'}`}>
                   <span className={`inline-block h-2 w-2 rounded-full ${health === 'ok' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
@@ -121,7 +205,7 @@ export default function Home() {
           {/* Tabs */}
           <nav className="hidden md:flex items-center gap-1">
             {openTabs.map((id) => {
-              const label: Record<string, string> = { signals: 'Market Signals', classical: 'Traditional', quantum: 'Quantum', comparison: 'Comparison' };
+              const label: Record<string, string> = { signals: 'Market Signals', classical: 'Traditional', quantum: 'Quantum', comparison: 'Comparison', stock: 'Stock Analysis' };
               const active = activeTab === id;
               return (
                 <button key={id} onClick={() => setActiveTab(id)} className={`group inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-all ${active ? 'bg-sky-500/20 text-sky-200 border border-sky-500/30 shadow-sm' : 'text-slate-300 hover:text-white hover:bg-white/5 border border-transparent'}`}>
@@ -130,6 +214,12 @@ export default function Home() {
                 </button>
               );
             })}
+            <a 
+              href="/about" 
+              className="ml-2 inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-white/5 border border-transparent transition-all"
+            >
+              About
+            </a>
           </nav>
         </div>
       </header>
@@ -171,20 +261,200 @@ export default function Home() {
               </div>
             )}
           </div>
+
+          {/* Section: ML Models */}
+          <div className="mt-3">
+            <button onClick={() => toggle('ml')} className="w-full flex items-center justify-between rounded-xl bg-white/5 hover:bg-white/10 transition p-3">
+              <span className="font-medium">🤖 Machine Learning</span>
+              <Chevron open={!!expanded.ml} />
+            </button>
+            {expanded.ml && (
+              <div className="pl-2.5 mt-2 space-y-2">
+                <div className="w-full text-left text-sm border border-white/10 rounded-lg px-3 py-2">
+                  <label className="text-slate-300 block mb-1.5">Ticker Symbol</label>
+                  <input 
+                    type="text" 
+                    value={stockTicker} 
+                    onChange={(e) => setStockTicker(e.target.value.toUpperCase())} 
+                    placeholder="SPY"
+                    className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-sm focus:outline-none focus:border-pink-500"
+                  />
+                  <button 
+                    onClick={runStockAnalysis} 
+                    disabled={loading==='stock'} 
+                    className="w-full mt-2 bg-gradient-to-r from-pink-500 to-violet-500 hover:from-pink-600 hover:to-violet-600 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 text-sm font-medium transition"
+                  >
+                    {loading==='stock' ? '📊 Analyzing…' : '📈 Analyze Stock'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </aside>
 
         {/* Main Content */}
         <main>
           {/* Empty state */}
           {activeTab === '' && (
-            <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.03] p-8 text-center">
-              <div className="absolute -top-24 -left-24 h-64 w-64 rounded-full bg-sky-500/20 blur-3xl" />
-              <div className="absolute -bottom-24 -right-24 h-64 w-64 rounded-full bg-violet-500/20 blur-3xl" />
-              <div className="relative">
-                <div className="text-6xl mb-3">📊</div>
-                <h3 className="text-xl font-semibold mb-2">Welcome to your investment cockpit</h3>
-                <p className="text-slate-300">Choose an analysis from the left to get started.</p>
+            <div className="space-y-6">
+              <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.03] p-8 text-center">
+                <div className="absolute -top-24 -left-24 h-64 w-64 rounded-full bg-sky-500/20 blur-3xl" />
+                <div className="absolute -bottom-24 -right-24 h-64 w-64 rounded-full bg-violet-500/20 blur-3xl" />
+                <div className="relative">
+                  <div className="text-6xl mb-3">📊</div>
+                  <h3 className="text-xl font-semibold mb-2">Welcome to your investment cockpit</h3>
+                  <p className="text-slate-300">Choose an analysis from the left to get started.</p>
+                </div>
               </div>
+
+              {/* Real-Time Profit Wave */}
+              <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold">💸 Real-Time Profit Wave</h2>
+                  {simData && (
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={autoRefresh} 
+                          onChange={(e) => setAutoRefresh(e.target.checked)}
+                          className="w-4 h-4 rounded"
+                        />
+                        <span>Auto-refresh (5s)</span>
+                      </label>
+                      {autoRefresh && <span className="text-emerald-400 animate-pulse">●</span>}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid md:grid-cols-3 gap-4 mb-4">
+                  <div className="md:col-span-2">
+                    <label className="text-sm text-slate-300 block mb-1.5">Portfolio Tickers (comma-separated)</label>
+                    <input 
+                      type="text" 
+                      value={portfolioTickers}
+                      onChange={(e) => setPortfolioTickers(e.target.value.toUpperCase())}
+                      placeholder="TSLA,NVDA,SPY,AMD"
+                      className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button 
+                      onClick={() => runSimulation()}
+                      disabled={loadingSim}
+                      className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 disabled:opacity-50 text-white rounded-lg px-4 py-2 font-medium transition"
+                    >
+                      {loadingSim ? '⏳ Loading...' : '📈 Simulate'}
+                    </button>
+                  </div>
+                </div>
+
+                {simData && (
+                  <div className="space-y-4">
+                    {/* Portfolio Value Chart */}
+                    <div className="bg-white/10 rounded-xl p-4">
+                      <h3 className="text-sm font-semibold mb-3 text-slate-200">Portfolio Value Over Time</h3>
+                      <ResponsiveContainer width="100%" height={250}>
+                        <LineChart
+                          data={simData.date.map((d: string, i: number) => ({ date: d, value: simData.value[i] }))}
+                        >
+                          <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                          <YAxis tick={{ fill: '#94a3b8' }} />
+                          <Tooltip 
+                            formatter={(v: number) => `$${v.toFixed(2)}`}
+                            contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
+                            labelStyle={{ color: '#cbd5e1' }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="value"
+                            stroke={simData.value[simData.value.length - 1] > simData.value[0] ? '#10b981' : '#ef4444'}
+                            strokeWidth={2}
+                            dot={false}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* FFT Volatility Spectrum */}
+                    {simData.fft_spectrum && (
+                      <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-4">
+                        <h3 className="text-sm font-semibold mb-3 text-violet-300 flex items-center gap-2">
+                          <span>📡</span>
+                          FFT Volatility Spectrum (Top 5 Frequencies)
+                        </h3>
+                        <div className="space-y-2">
+                          {simData.fft_spectrum.frequencies.map((freq: number, i: number) => (
+                            <div key={i} className="flex items-center gap-3">
+                              <div className="text-xs text-slate-400 w-20">
+                                Freq {i + 1}:
+                              </div>
+                              <div className="flex-1 bg-white/5 rounded-full h-6 overflow-hidden">
+                                <div 
+                                  className="h-full bg-gradient-to-r from-violet-500 to-purple-600 flex items-center justify-end pr-2"
+                                  style={{ width: `${(simData.fft_spectrum.magnitudes[i] / Math.max(...simData.fft_spectrum.magnitudes)) * 100}%` }}
+                                >
+                                  <span className="text-xs font-mono text-white">{simData.fft_spectrum.magnitudes[i].toFixed(4)}</span>
+                                </div>
+                              </div>
+                              <div className="text-xs text-slate-400 w-24 text-right">
+                                {freq.toFixed(6)} Hz
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3 pt-3 border-t border-white/10 grid grid-cols-2 gap-4 text-xs">
+                          <div>
+                            <span className="text-slate-400">Mean Return:</span>
+                            <span className="ml-2 font-mono text-emerald-300">{(simData.fft_spectrum.mean * 100).toFixed(4)}%</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">Std Dev:</span>
+                            <span className="ml-2 font-mono text-amber-300">{(simData.fft_spectrum.std * 100).toFixed(4)}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Summary Stats */}
+                    <div className="flex items-center justify-between text-sm">
+                      <p className="text-slate-300">
+                        {simData.value[simData.value.length - 1] > simData.value[0]
+                          ? '🟩 Portfolio gained value — positive trend'
+                          : '🟥 Portfolio lost value — negative trend'}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        Tickers: {simData.tickers.join(', ')}
+                      </p>
+                    </div>
+                    {simData.timestamp && (
+                      <p className="text-xs text-slate-500 text-right">
+                        Updated: {new Date(simData.timestamp).toLocaleTimeString()}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </section>
+
+              {/* Quantum State Visualization */}
+              <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+                <h2 className="text-xl font-semibold mb-4">⚛️ Quantum State Visualization</h2>
+                <button 
+                  onClick={loadQuantumState}
+                  disabled={loading === 'quantumState'}
+                  className="bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-600 hover:to-purple-600 disabled:opacity-50 text-white rounded-lg px-4 py-2 font-medium transition mb-4"
+                >
+                  {loading === 'quantumState' ? '⏳ Loading...' : '🔮 Show Quantum State'}
+                </button>
+                {quantumState && quantumState.qubits && (
+                  <div>
+                    <BlochViewer qubits={quantumState.qubits} />
+                    <p className="text-sm text-slate-400 mt-3">
+                      Each sphere shows one qubit's state — <span className="text-blue-400">blue = |0⟩</span>, <span className="text-orange-400">orange = |1⟩</span>, <span className="text-purple-400">purple = superposition</span>.
+                    </p>
+                  </div>
+                )}
+              </section>
             </div>
           )}
 
@@ -392,6 +662,80 @@ export default function Home() {
                     : classical.objective < quantum.objective
                     ? 'Quantum shows superior potential; AI identified stronger patterns.'
                     : 'Traditional appears safer given current conditions.'}
+                </p>
+              </div>
+            </section>
+          )}
+
+          {/* Stock Analysis */}
+          {activeTab === 'stock' && rfResult && (
+            <section className="space-y-6">
+              <div className="rounded-2xl p-6 bg-gradient-to-br from-pink-600 to-pink-500 shadow-lg shadow-pink-900/30 text-center">
+                <h3 className="text-lg font-semibold mb-2">📈 Predicted Daily Return</h3>
+                <div className="text-5xl font-extrabold">{(rfResult.predicted_return * 100).toFixed(3)}%</div>
+                <p className="text-pink-100/80 mt-2">{rfResult.ticker || stockTicker}</p>
+              </div>
+
+              {rfResult.statistics && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center">
+                    <div className="text-2xl font-bold text-sky-300">${rfResult.statistics.latest_price?.toFixed(2)}</div>
+                    <div className="text-sm text-slate-400 mt-1">Latest Price</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center">
+                    <div className="text-2xl font-bold text-emerald-300">{(rfResult.statistics.total_return * 100)?.toFixed(2)}%</div>
+                    <div className="text-sm text-slate-400 mt-1">Total Return</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center">
+                    <div className="text-2xl font-bold text-violet-300">{(rfResult.statistics.avg_daily_return * 100)?.toFixed(3)}%</div>
+                    <div className="text-sm text-slate-400 mt-1">Avg Daily Return</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center">
+                    <div className="text-2xl font-bold text-amber-300">{rfResult.statistics.avg_volatility?.toFixed(3)}%</div>
+                    <div className="text-sm text-slate-400 mt-1">Avg Volatility</div>
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+                <h3 className="text-lg font-semibold mb-4">📊 Price & Volume Analysis</h3>
+                {rfResult.plot_path && (
+                  <div className="rounded-xl overflow-hidden border border-white/10">
+                    <img src={`${API}${rfResult.plot_path}`} alt="Stock Analysis Plot" className="w-full" />
+                  </div>
+                )}
+              </div>
+
+              {rfResult.model_info && (
+                <div className="rounded-2xl border border-pink-400/20 bg-pink-500/10 p-6">
+                  <h3 className="font-semibold text-pink-200 mb-3">🔬 Model Parameters</h3>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-300">Volume (millions):</span>
+                      <span className="font-semibold">{rfResult.model_info.coefficients?.volume_millions?.toFixed(6)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-300">Price Change %:</span>
+                      <span className="font-semibold">{rfResult.model_info.coefficients?.price_change_pct?.toFixed(6)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-300">Volatility:</span>
+                      <span className="font-semibold">{rfResult.model_info.coefficients?.volatility?.toFixed(6)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm border-t border-white/10 pt-2">
+                      <span className="text-slate-300">Model Intercept:</span>
+                      <span className="font-semibold">{rfResult.model_info.intercept?.toFixed(6)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+                <b>💡 Insight:</b>
+                <p className="text-slate-300 mt-1">
+                  The model uses linear regression to predict daily returns based on real-time market data from yfinance. 
+                  Features include trading volume (millions), intraday price change percentage, and 5-day rolling volatility. 
+                  Data spans {rfResult.statistics?.data_points || '~20'} trading days.
                 </p>
               </div>
             </section>

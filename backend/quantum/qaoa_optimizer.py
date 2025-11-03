@@ -59,3 +59,12 @@ def solve_qaoa(cov: np.ndarray, mu: np.ndarray, risk_aversion: float = 0.5, reps
                 best_bits = bits
         
         return best_bits.tolist(), best_objective
+
+def get_qaoa_state_preview(n_qubits: int = 3):
+    """Return simulated Bloch sphere data (theta, phi for each qubit)."""
+    np.random.seed(42)
+
+    # random angles representing superposition states
+    theta = np.random.uniform(0, np.pi, n_qubits)
+    phi = np.random.uniform(0, 2 * np.pi, n_qubits)
+    return [{"theta": float(t), "phi": float(p)} for t, p in zip(theta, phi)]
