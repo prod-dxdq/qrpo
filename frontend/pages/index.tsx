@@ -8,6 +8,17 @@ const BlochViewer = dynamic(() => import('../components/BlochViewer'), {
   loading: () => <div className="h-80 bg-gradient-to-br from-gray-100 to-gray-200 rounded-xl shadow-inner p-2 flex items-center justify-center"><div className="text-gray-600">Loading...</div></div>
 });
 
+// Dynamically import PortfolioGalaxy to avoid SSR issues with Three.js
+const PortfolioGalaxy = dynamic(() => import('../components/PortfolioGalaxy'), { 
+  ssr: false,
+  loading: () => <div className="h-[500px] bg-gradient-to-br from-indigo-950 to-purple-950 rounded-xl shadow-inner flex items-center justify-center"><div className="text-slate-300">Loading Galaxy...</div></div>
+});
+
+// Dynamically import FinanceBot
+const FinanceBot = dynamic(() => import('../components/FinanceBot'), { 
+  ssr: false
+});
+
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // Minimal inline icons to avoid extra deps
@@ -33,7 +44,7 @@ export default function Home() {
   // Tabs and sidebar state
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<string>('');
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ signals: true, strategies: true, ml: true });
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({ signals: true, strategies: true, ml: true, visualizations: true });
 
   // Brand palette
   const colors = ['#118DFF', '#12239E', '#E66C37', '#6B007B'];
@@ -141,6 +152,7 @@ export default function Home() {
       const res = await fetch(`${API}/quantum/state?n=4`);
       const data = await res.json();
       setQuantumState(data);
+      openTab('quantumState'); // Open as tab
     } catch (error) {
       console.error('Failed to load quantum state:', error);
       alert('Failed to load quantum state visualization');
@@ -205,7 +217,15 @@ export default function Home() {
           {/* Tabs */}
           <nav className="hidden md:flex items-center gap-1">
             {openTabs.map((id) => {
-              const label: Record<string, string> = { signals: 'Market Signals', classical: 'Traditional', quantum: 'Quantum', comparison: 'Comparison', stock: 'Stock Analysis' };
+              const label: Record<string, string> = { 
+                signals: 'Market Signals', 
+                classical: 'Traditional', 
+                quantum: 'Quantum', 
+                comparison: 'Comparison', 
+                stock: 'Stock Analysis',
+                galaxy: '🌌 Portfolio Galaxy',
+                quantumState: '⚛️ Quantum States'
+              };
               const active = activeTab === id;
               return (
                 <button key={id} onClick={() => setActiveTab(id)} className={`group inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-all ${active ? 'bg-sky-500/20 text-sky-200 border border-sky-500/30 shadow-sm' : 'text-slate-300 hover:text-white hover:bg-white/5 border border-transparent'}`}>
@@ -258,6 +278,37 @@ export default function Home() {
                 {(classical && quantum) && (
                   <button onClick={() => openTab('comparison')} className="w-full text-left text-sm text-slate-300 hover:text-white hover:bg-amber-500/10 border border-white/10 rounded-lg px-3 py-2 transition">🏆 Compare Strategies</button>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* Section: Visualizations */}
+          <div className="mt-3">
+            <button onClick={() => toggle('visualizations')} className="w-full flex items-center justify-between rounded-xl bg-white/5 hover:bg-white/10 transition p-3">
+              <span className="font-medium">🌌 Visualizations</span>
+              <Chevron open={!!expanded.visualizations} />
+            </button>
+            {expanded.visualizations && (
+              <div className="pl-2.5 mt-2 space-y-2">
+                <button 
+                  onClick={() => {
+                    if (simData && simData.assets) {
+                      openTab('galaxy');
+                    } else {
+                      alert('Please run a Portfolio Simulation first to see the Galaxy view!');
+                    }
+                  }}
+                  className="w-full text-left text-sm text-slate-300 hover:text-white hover:bg-purple-500/10 border border-white/10 rounded-lg px-3 py-2 transition"
+                >
+                  🌌 Portfolio Galaxy
+                </button>
+                <button 
+                  onClick={loadQuantumState}
+                  disabled={loading === 'quantumState'}
+                  className="w-full text-left text-sm text-slate-300 hover:text-white hover:bg-violet-500/10 border border-white/10 rounded-lg px-3 py-2 transition"
+                >
+                  {loading === 'quantumState' ? '⏳ Loading...' : '⚛️ Quantum States'}
+                </button>
               </div>
             )}
           </div>
@@ -351,6 +402,156 @@ export default function Home() {
 
                 {simData && (
                   <div className="space-y-4">
+                    {/* Correlation Heatmap */}
+                    {simData.correlation_matrix && (
+                      <div className="bg-gradient-to-br from-rose-900/20 to-pink-900/20 border border-rose-700/30 rounded-xl p-4">
+                        <h3 className="text-sm font-semibold mb-3 text-rose-300 flex items-center gap-2">
+                          <span>🔥</span>
+                          Asset Correlation Heatmap
+                        </h3>
+                        <div className="overflow-x-auto">
+                          <div className="inline-block min-w-full">
+                            {/* Heatmap Grid */}
+                            <div className="grid gap-1" style={{ gridTemplateColumns: `auto repeat(${simData.tickers.length}, 1fr)` }}>
+                              {/* Top left corner (empty) */}
+                              <div className="w-16"></div>
+                              {/* Column headers */}
+                              {simData.tickers.map((ticker: string) => (
+                                <div key={`header-${ticker}`} className="text-xs font-mono text-slate-300 text-center py-1">
+                                  {ticker}
+                                </div>
+                              ))}
+                              
+                              {/* Rows */}
+                              {simData.tickers.map((ticker1: string, i: number) => (
+                                <>
+                                  {/* Row header */}
+                                  <div key={`row-${ticker1}`} className="text-xs font-mono text-slate-300 text-right pr-2 flex items-center justify-end">
+                                    {ticker1}
+                                  </div>
+                                  {/* Correlation cells */}
+                                  {simData.tickers.map((ticker2: string, j: number) => {
+                                    const corrValue = simData.correlation_matrix.find(
+                                      (c: any) => c.x === ticker1 && c.y === ticker2
+                                    )?.value || 0;
+                                    
+                                    // Color scale: red (-1) -> yellow (0) -> green (1)
+                                    const getColor = (val: number) => {
+                                      if (val > 0.7) return 'bg-emerald-500';
+                                      if (val > 0.4) return 'bg-lime-500';
+                                      if (val > 0.1) return 'bg-yellow-500';
+                                      if (val > -0.1) return 'bg-amber-500';
+                                      if (val > -0.4) return 'bg-orange-500';
+                                      return 'bg-red-500';
+                                    };
+                                    
+                                    const getTextColor = (val: number) => {
+                                      if (Math.abs(val) > 0.5) return 'text-white';
+                                      return 'text-slate-900';
+                                    };
+                                    
+                                    return (
+                                      <div
+                                        key={`cell-${ticker1}-${ticker2}`}
+                                        className={`${getColor(corrValue)} ${getTextColor(corrValue)} rounded aspect-square flex items-center justify-center text-xs font-bold transition-all duration-300 hover:scale-110 hover:shadow-lg cursor-pointer relative group`}
+                                        title={`${ticker1} vs ${ticker2}: ${corrValue.toFixed(3)}`}
+                                      >
+                                        <span className="text-[10px] opacity-90">{corrValue.toFixed(2)}</span>
+                                        {/* Tooltip on hover */}
+                                        <div className="absolute bottom-full mb-2 hidden group-hover:block bg-slate-800 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 shadow-xl border border-slate-600">
+                                          {ticker1} ↔ {ticker2}: {corrValue.toFixed(3)}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </>
+                              ))}
+                            </div>
+                            
+                            {/* Legend */}
+                            <div className="mt-4 flex items-center gap-2 text-xs">
+                              <span className="text-slate-400">Correlation:</span>
+                              <div className="flex items-center gap-1">
+                                <div className="w-4 h-4 bg-red-500 rounded"></div>
+                                <span className="text-slate-400">-1.0</span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <div className="w-4 h-4 bg-yellow-500 rounded"></div>
+                                <span className="text-slate-400">0.0</span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <div className="w-4 h-4 bg-emerald-500 rounded"></div>
+                                <span className="text-slate-400">+1.0</span>
+                              </div>
+                            </div>
+                            
+                            {/* Educational note */}
+                            <div className="mt-3 text-xs text-slate-400 bg-white/5 rounded-lg p-3 border border-white/10">
+                              <strong className="text-rose-300">📚 How to read:</strong>
+                              <ul className="mt-1 space-y-1 list-disc list-inside">
+                                <li><span className="text-emerald-400">Green (0.7-1.0):</span> Assets move together (high correlation risk)</li>
+                                <li><span className="text-yellow-400">Yellow (0.0):</span> No correlation (neutral)</li>
+                                <li><span className="text-red-400">Red (-1.0 to -0.4):</span> Assets move opposite (diversification benefit!)</li>
+                              </ul>
+                              <p className="mt-2 text-slate-500">
+                                💡 <strong>Tip:</strong> Look for red cells off the diagonal for better diversification.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 3D Portfolio Galaxy */}
+                    {simData.assets && simData.assets.length > 0 && (
+                      <div className="bg-gradient-to-br from-indigo-900/20 to-purple-900/20 border border-indigo-700/30 rounded-xl p-4">
+                        <div className="flex items-start gap-3 mb-4">
+                          <div className="text-3xl">🌌</div>
+                          <div className="flex-1">
+                            <h3 className="text-lg font-semibold text-indigo-300 mb-2">Portfolio Galaxy Visualization</h3>
+                            <p className="text-xs text-slate-400 leading-relaxed">
+                              Your portfolio as a solar system. Each asset is a planet orbiting the center. 
+                              <strong className="text-indigo-300"> Size = allocation</strong>, 
+                              <strong className="text-purple-300"> speed = volatility</strong>, 
+                              <strong className="text-pink-300"> distance = market correlation</strong>.
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <PortfolioGalaxy 
+                          assets={simData.assets}
+                          onAssetClick={(asset) => {
+                            console.log('Selected asset:', asset);
+                          }}
+                        />
+                        
+                        <div className="mt-4 bg-indigo-950/50 rounded-lg p-4 border border-indigo-800/30">
+                          <h4 className="text-sm font-semibold text-indigo-300 mb-2">🎓 Understanding the Galaxy</h4>
+                          <div className="grid md:grid-cols-2 gap-3 text-xs text-slate-300">
+                            <div>
+                              <strong className="text-yellow-400">☀️ Central Sun:</strong>
+                              <p className="text-slate-400 mt-1">Represents your portfolio's center. All assets orbit around this balanced point.</p>
+                            </div>
+                            <div>
+                              <strong className="text-blue-400">🌍 Planet Size:</strong>
+                              <p className="text-slate-400 mt-1">Bigger planets = larger allocation %. Your biggest holdings are most visible.</p>
+                            </div>
+                            <div>
+                              <strong className="text-purple-400">💨 Orbit Speed:</strong>
+                              <p className="text-slate-400 mt-1">Fast orbits = high volatility. Watch volatile assets zoom around!</p>
+                            </div>
+                            <div>
+                              <strong className="text-pink-400">📍 Distance from Sun:</strong>
+                              <p className="text-slate-400 mt-1">Far planets = low market correlation. These provide diversification benefits.</p>
+                            </div>
+                          </div>
+                          <div className="mt-3 pt-3 border-t border-indigo-800/30 text-xs text-slate-400">
+                            <strong className="text-indigo-300">💡 Investment Insight:</strong> Ideally, you want planets at different distances (diversification) with varied orbit speeds (mixed volatility). If all planets are close together and moving at the same speed, your portfolio is concentrated!
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Portfolio Value Chart */}
                     <div className="bg-white/10 rounded-xl p-4">
                       <h3 className="text-sm font-semibold mb-3 text-slate-200">Portfolio Value Over Time</h3>
@@ -435,27 +636,96 @@ export default function Home() {
                   </div>
                 )}
               </section>
+            </div>
+          )}
 
-              {/* Quantum State Visualization */}
-              <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-                <h2 className="text-xl font-semibold mb-4">⚛️ Quantum State Visualization</h2>
-                <button 
-                  onClick={loadQuantumState}
-                  disabled={loading === 'quantumState'}
-                  className="bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-600 hover:to-purple-600 disabled:opacity-50 text-white rounded-lg px-4 py-2 font-medium transition mb-4"
-                >
-                  {loading === 'quantumState' ? '⏳ Loading...' : '🔮 Show Quantum State'}
-                </button>
-                {quantumState && quantumState.qubits && (
-                  <div>
-                    <BlochViewer qubits={quantumState.qubits} />
-                    <p className="text-sm text-slate-400 mt-3">
-                      Each sphere shows one qubit's state — <span className="text-blue-400">blue = |0⟩</span>, <span className="text-orange-400">orange = |1⟩</span>, <span className="text-purple-400">purple = superposition</span>.
+          {/* Quantum State Visualization Tab */}
+          {activeTab === 'quantumState' && quantumState && quantumState.qubits && (
+            <section className="space-y-6">
+              <div className="rounded-2xl p-6 bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-600 shadow-lg shadow-purple-900/30 text-center">
+                <h3 className="text-2xl font-bold mb-2">⚛️ Quantum State Visualization</h3>
+                <p className="text-white/80">Bloch sphere representation of quantum qubits</p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+                <div className="flex items-start gap-3 mb-4">
+                  <div className="text-3xl">⚛️</div>
+                  <div className="flex-1">
+                    <h2 className="text-xl font-semibold mb-2">Quantum Superposition States</h2>
+                    <p className="text-sm text-slate-300 leading-relaxed">
+                      Visualize quantum superposition states using <strong>Bloch spheres</strong>. 
+                      Each sphere represents a qubit (quantum bit) in the portfolio optimization algorithm.
                     </p>
                   </div>
-                )}
-              </section>
-            </div>
+                </div>
+
+                <BlochViewer qubits={quantumState.qubits} />
+                
+                {/* Detailed explanation */}
+                <div className="mt-4 space-y-3">
+                  <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 rounded-lg p-4 border border-slate-700/50">
+                    <h3 className="text-sm font-semibold text-violet-300 mb-2 flex items-center gap-2">
+                      <span>🎯</span> Understanding the Visualization
+                    </h3>
+                    <div className="text-xs text-slate-300 space-y-2">
+                      <p>
+                        <strong className="text-blue-400">Blue (North):</strong> State |0⟩ — Asset <em>excluded</em> from portfolio
+                      </p>
+                      <p>
+                        <strong className="text-orange-400">Orange (South):</strong> State |1⟩ — Asset <em>included</em> in portfolio
+                      </p>
+                      <p>
+                        <strong className="text-purple-400">Purple (Equator):</strong> Superposition — Asset is simultaneously included AND excluded until measurement
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-emerald-900/30 to-teal-900/30 rounded-lg p-4 border border-emerald-700/50">
+                    <h3 className="text-sm font-semibold text-emerald-300 mb-2 flex items-center gap-2">
+                      <span>💰</span> Finance Application: QAOA Portfolio Optimization
+                    </h3>
+                    <div className="text-xs text-slate-300 space-y-2 leading-relaxed">
+                      <p>
+                        <strong>The Challenge:</strong> Classical computers must evaluate portfolios one at a time. 
+                        For 20 assets, that's over 1 million combinations (2²⁰).
+                      </p>
+                      <p>
+                        <strong>Quantum Advantage:</strong> QAOA uses <em>superposition</em> to explore multiple portfolios simultaneously. 
+                        Each qubit represents whether to include/exclude an asset. The quantum circuit evolves these qubits 
+                        to constructively interfere toward optimal portfolios while canceling out poor ones.
+                      </p>
+                      <p>
+                        <strong>The Process:</strong>
+                      </p>
+                      <ol className="list-decimal list-inside space-y-1 ml-2">
+                        <li>Initialize qubits in superposition (all portfolios at once)</li>
+                        <li>Apply problem-specific gates encoding risk/return trade-offs</li>
+                        <li>Apply mixing gates to explore nearby solutions</li>
+                        <li>Measure qubits → collapse to a specific portfolio selection</li>
+                        <li>Classical optimizer adjusts quantum parameters and repeats</li>
+                      </ol>
+                      <p className="pt-1 border-t border-emerald-700/30">
+                        <strong>Why It Matters:</strong> Quantum algorithms can potentially find better portfolios faster, 
+                        especially for large-scale problems with complex constraints (100+ assets, sector limits, ESG requirements).
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-amber-900/20 to-orange-900/20 rounded-lg p-4 border border-amber-700/50">
+                    <h3 className="text-sm font-semibold text-amber-300 mb-2 flex items-center gap-2">
+                      <span>🔬</span> Technical Details
+                    </h3>
+                    <div className="text-xs text-slate-300 space-y-1">
+                      <p><strong>Algorithm:</strong> Quantum Approximate Optimization Algorithm (QAOA)</p>
+                      <p><strong>Problem Type:</strong> QUBO (Quadratic Unconstrained Binary Optimization)</p>
+                      <p><strong>Objective:</strong> Minimize <code className="px-1 py-0.5 bg-slate-700 rounded">risk - λ × return</code></p>
+                      <p><strong>Qubits:</strong> {quantumState.qubits.length} (one per asset in simplified demo)</p>
+                      <p><strong>State Space:</strong> 2<sup>{quantumState.qubits.length}</sup> = {Math.pow(2, quantumState.qubits.length)} possible portfolios</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
           )}
 
           {/* Signals */}
@@ -667,6 +937,93 @@ export default function Home() {
             </section>
           )}
 
+          {/* Portfolio Galaxy Tab */}
+          {activeTab === 'galaxy' && simData && simData.assets && (
+            <section className="space-y-6">
+              <div className="rounded-2xl p-6 bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 shadow-lg shadow-purple-900/30 text-center">
+                <h3 className="text-2xl font-bold mb-2">🌌 Portfolio Galaxy</h3>
+                <p className="text-white/80">Your portfolio visualized as a solar system</p>
+              </div>
+
+              <div className="bg-gradient-to-br from-indigo-900/20 to-purple-900/20 border border-indigo-700/30 rounded-xl p-6">
+                <div className="flex items-start gap-3 mb-4">
+                  <div className="text-4xl">🌌</div>
+                  <div className="flex-1">
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-2">Interactive 3D Visualization</h3>
+                    <p className="text-sm text-slate-400 leading-relaxed">
+                      Each asset orbits the central sun. <strong className="text-indigo-300">Click planets</strong> to explore details.
+                      Watch how <strong className="text-purple-300">volatility affects orbit speed</strong> and 
+                      <strong className="text-pink-300"> correlation determines distance</strong> from the center.
+                    </p>
+                  </div>
+                </div>
+                
+                <PortfolioGalaxy 
+                  assets={simData.assets}
+                  onAssetClick={(asset) => {
+                    console.log('Selected asset:', asset);
+                  }}
+                />
+                
+                <div className="mt-6 bg-indigo-950/50 rounded-lg p-4 border border-indigo-800/30">
+                  <h4 className="text-sm font-semibold text-indigo-300 mb-3">🎓 Understanding the Galaxy</h4>
+                  <div className="grid md:grid-cols-2 gap-4 text-xs text-slate-300">
+                    <div className="bg-white/5 rounded p-3">
+                      <strong className="text-yellow-400">☀️ Central Sun:</strong>
+                      <p className="text-slate-400 mt-1">Represents your portfolio's center. All assets orbit around this balanced point.</p>
+                    </div>
+                    <div className="bg-white/5 rounded p-3">
+                      <strong className="text-blue-400">🌍 Planet Size:</strong>
+                      <p className="text-slate-400 mt-1">Bigger planets = larger allocation %. Your biggest holdings are most visible.</p>
+                    </div>
+                    <div className="bg-white/5 rounded p-3">
+                      <strong className="text-purple-400">💨 Orbit Speed:</strong>
+                      <p className="text-slate-400 mt-1">Fast orbits = high volatility. Watch volatile assets zoom around!</p>
+                    </div>
+                    <div className="bg-white/5 rounded p-3">
+                      <strong className="text-pink-400">📍 Distance from Sun:</strong>
+                      <p className="text-slate-400 mt-1">Far planets = low market correlation. These provide diversification benefits.</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-indigo-800/30 text-xs text-slate-400">
+                    <strong className="text-indigo-300">💡 Investment Insight:</strong> Ideally, you want planets at different distances (diversification) with varied orbit speeds (mixed volatility). If all planets are close together and moving at the same speed, your portfolio is concentrated!
+                  </div>
+                </div>
+
+                {/* Asset Breakdown Table */}
+                <div className="mt-6 bg-slate-900/50 rounded-lg p-4 border border-slate-800">
+                  <h4 className="text-sm font-semibold text-slate-300 mb-3">📊 Asset Metrics</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="border-b border-slate-700">
+                        <tr className="text-slate-400">
+                          <th className="text-left py-2 px-2">Ticker</th>
+                          <th className="text-right py-2 px-2">Weight</th>
+                          <th className="text-right py-2 px-2">Return</th>
+                          <th className="text-right py-2 px-2">Volatility</th>
+                          <th className="text-right py-2 px-2">Correlation</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800">
+                        {simData.assets.map((asset: any) => (
+                          <tr key={asset.ticker} className="hover:bg-white/5">
+                            <td className="py-2 px-2 font-mono text-white">{asset.ticker}</td>
+                            <td className="text-right py-2 px-2 font-mono text-emerald-300">{(asset.weight * 100).toFixed(1)}%</td>
+                            <td className={`text-right py-2 px-2 font-mono ${asset.return >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
+                              {(asset.return * 100).toFixed(2)}%
+                            </td>
+                            <td className="text-right py-2 px-2 font-mono text-amber-300">{(asset.volatility * 100).toFixed(2)}%</td>
+                            <td className="text-right py-2 px-2 font-mono text-blue-300">{asset.correlation.toFixed(3)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* Stock Analysis */}
           {activeTab === 'stock' && rfResult && (
             <section className="space-y-6">
@@ -742,6 +1099,9 @@ export default function Home() {
           )}
         </main>
       </div>
+
+      {/* AI Finance Bot */}
+      <FinanceBot />
     </div>
   );
 }

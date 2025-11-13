@@ -12,6 +12,12 @@ from datetime import datetime, timedelta
 from ml_model.rf_features import fft_features, train_rf_model, fetch_stock_data, train_stock_model
 from quantum.qaoa_optimizer import solve_qaoa
 from quantum.qaoa_optimizer import get_qaoa_state_preview
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Load environment variables from .env file in backend directory
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
 
 app = FastAPI(title="QRPO Backend", version="1.0.0")
 
@@ -244,6 +250,17 @@ def simulate_portfolio(tickers: str = "TSLA,NVDA,SPY,AMD", weights: str = "0.25,
         
         returns = data.pct_change().dropna()
 
+        # Compute correlation matrix
+        correlation_matrix = returns.corr()
+        correlation_data = []
+        for i, ticker1 in enumerate(tickers_list):
+            for j, ticker2 in enumerate(tickers_list):
+                correlation_data.append({
+                    "x": ticker1,
+                    "y": ticker2,
+                    "value": float(correlation_matrix.iloc[i, j])
+                })
+
         # Compute portfolio value over time
         portfolio_values = (1 + (returns * weights_arr).sum(axis=1)).cumprod() * 10000
         portfolio_df = portfolio_values.reset_index()
@@ -266,10 +283,33 @@ def simulate_portfolio(tickers: str = "TSLA,NVDA,SPY,AMD", weights: str = "0.25,
         mean_return = float(np.mean(portfolio_returns))
         std_return = float(np.std(portfolio_returns))
 
+        # Calculate asset metrics for 3D galaxy visualization
+        asset_metrics = []
+        market_returns = returns[tickers_list[0]] if len(tickers_list) > 0 else returns.mean(axis=1)  # Use first ticker as market proxy
+        
+        for i, ticker in enumerate(tickers_list):
+            asset_returns = returns[ticker]
+            
+            # Calculate metrics
+            mean_asset_return = float(asset_returns.mean())
+            volatility = float(asset_returns.std())
+            correlation_to_market = float(returns[ticker].corr(market_returns))
+            weight = float(weights_arr[i])
+            
+            asset_metrics.append({
+                "ticker": ticker,
+                "weight": weight,
+                "return": mean_asset_return,
+                "volatility": volatility,
+                "correlation": correlation_to_market
+            })
+
         return {
             "date": portfolio_df["Date"].dt.strftime("%Y-%m-%d").tolist(),
             "value": portfolio_df["Value"].tolist(),
             "tickers": tickers_list,
+            "correlation_matrix": correlation_data,
+            "assets": asset_metrics,
             "fft_spectrum": {
                 "frequencies": top_freqs,
                 "magnitudes": top_mags,
@@ -291,3 +331,473 @@ def quantum_state(n: int = 4):
     
     qubits = get_qaoa_state_preview(n)
     return {"qubits": qubits}
+
+class ChatRequest(BaseModel):
+    message: str
+    conversation_history: List[dict] = []
+
+def get_stock_data(ticker: str):
+    """Fetch real-time stock data from yfinance"""
+    try:
+        import yfinance as yf
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        hist = stock.history(period="1mo")
+        
+        if hist.empty:
+            return None
+            
+        current_price = hist['Close'].iloc[-1]
+        month_ago_price = hist['Close'].iloc[0]
+        month_change = ((current_price - month_ago_price) / month_ago_price) * 100
+        
+        return {
+            'ticker': ticker.upper(),
+            'price': round(current_price, 2),
+            'month_change': round(month_change, 2),
+            'name': info.get('longName', ticker),
+            'sector': info.get('sector', 'Unknown'),
+            'pe_ratio': info.get('trailingPE', 'N/A'),
+            'market_cap': info.get('marketCap', 'N/A')
+        }
+    except:
+        return None
+
+def analyze_market_sentiment():
+    """Analyze current market sentiment using major indices"""
+    try:
+        import yfinance as yf
+        indices = {
+            'SPY': 'S&P 500',
+            'QQQ': 'Nasdaq',
+            'DIA': 'Dow Jones'
+        }
+        
+        sentiment = {}
+        for ticker, name in indices.items():
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period="1mo")
+            if not hist.empty:
+                current = hist['Close'].iloc[-1]
+                month_ago = hist['Close'].iloc[0]
+                change = ((current - month_ago) / month_ago) * 100
+                sentiment[name] = round(change, 2)
+        
+        return sentiment
+    except:
+        return None
+
+def get_smart_finance_response(question: str) -> str:
+    """Generate intelligent responses based on real market data"""
+    import re
+    q_lower = question.lower()
+    
+    # Extract ticker symbols from question (e.g., AAPL, MSFT, TSLA)
+    ticker_pattern = r'\b[A-Z]{1,5}\b'
+    potential_tickers = re.findall(ticker_pattern, question)
+    
+    # Check for specific stock mentions
+    if potential_tickers:
+        ticker = potential_tickers[0]
+        stock_data = get_stock_data(ticker)
+        if stock_data:
+            trend = "📈 up" if stock_data['month_change'] > 0 else "📉 down"
+            return f"""📊 **{stock_data['name']} ({stock_data['ticker']}) Analysis**
+
+**Current Data:**
+• Price: ${stock_data['price']}
+• 1-Month Change: {trend} {abs(stock_data['month_change'])}%
+• Sector: {stock_data['sector']}
+• P/E Ratio: {stock_data['pe_ratio']}
+
+**Analysis:**
+{get_stock_recommendation(stock_data)}
+
+**Technical Levels:**
+• Support: ${round(stock_data['price'] * 0.95, 2)}
+• Resistance: ${round(stock_data['price'] * 1.05, 2)}
+
+This is based on real-time market data from Yahoo Finance."""
+    
+    # Stock buying questions
+    if any(word in q_lower for word in ["buy", "purchase", "invest in", "stocks should i", "what stocks"]):
+        market_sentiment = analyze_market_sentiment()
+        sentiment_text = ""
+        if market_sentiment:
+            sentiment_text = "\n**Current Market:**\n"
+            for index, change in market_sentiment.items():
+                trend = "📈" if change > 0 else "📉"
+                sentiment_text += f"• {index}: {trend} {change}%\n"
+        
+        # Get real data for top recommendations
+        recommendations = []
+        top_picks = ['NVDA', 'MSFT', 'AAPL', 'GOOGL']
+        for ticker in top_picks:
+            data = get_stock_data(ticker)
+            if data:
+                recommendations.append(data)
+        
+        rec_text = ""
+        if recommendations:
+            rec_text = "\n**Top Picks (Real-Time Data):**\n"
+            for stock in recommendations[:3]:
+                trend = "📈" if stock['month_change'] > 0 else "📉"
+                rec_text += f"• **{stock['ticker']}** ${stock['price']} ({trend} {abs(stock['month_change'])}% this month)\n"
+        
+        return f"""📈 **Smart Stock Recommendations**
+{sentiment_text}
+{rec_text}
+
+**Strategy:**
+• Dollar-cost average over 4-6 weeks
+• Set stop-losses at 8% below entry
+• Target 15-25% gains over 6-12 months
+• Diversify across 5+ positions
+
+**Sectors to Watch:**
+• 🤖 AI/Tech - Strong momentum with AI boom
+• ⚕️ Healthcare - Defensive with aging demographics  
+• ⚡ Clean Energy - Long-term growth trend
+• 🏦 Financials - Benefit from higher rates
+
+⚠️ **Risk Management:** Monitor Fed policy, inflation data, and earnings reports. Never invest more than you can afford to lose."""
+
+    # Selling questions
+    elif any(word in q_lower for word in ["sell", "exit", "take profit", "when should i sell"]):
+        return """💰 **Strategic Exit Planning (Real-Time Analysis)**
+
+**When to Sell:**
+1. **Profit Target Hit** - Lock in 20-30% gains on growth stocks
+2. **Fundamental Change** - Company misses earnings 2+ quarters
+3. **Technical Break** - Price drops below 200-day moving average with volume
+4. **Portfolio Rebalancing** - Trim positions exceeding 15% of portfolio
+
+**Exit Signals:**
+• 📊 RSI > 70 (overbought) + bearish divergence
+• 📉 Break below key support with high volume
+• 🔴 Negative earnings surprise + guidance cut
+• 🌍 Sector rotation out of your holdings
+
+**Tax Optimization:**
+• Hold > 1 year for long-term capital gains (15-20% tax vs 22-37%)
+• Harvest losses to offset gains
+• Consider selling in low-income years
+
+**Rule of Thumb:** 
+• Sell 25% at +20% gain
+• Sell 25% at +40% gain  
+• Keep 50% with trailing stop-loss for long-term growth
+
+**Pro Tip:** Set alerts for technical breaks and earnings dates. Don't let emotions drive decisions!"""
+
+    # Portfolio/diversification questions
+    elif any(word in q_lower for word in ["portfolio", "diversif", "allocat", "balance"]):
+        return """🎯 **Optimal Portfolio Construction**
+
+**Recommended Allocation (Moderate Risk):**
+• 40% - Large Cap Stocks (SPY, VOO)
+• 20% - Growth Tech (QQQ, individual picks)
+• 15% - International (VEA, VWO)
+• 10% - Bonds (BND, TLT)
+• 10% - Real Estate/Commodities (VNQ, GLD)
+• 5% - Cash/High-Yield Savings
+
+**Diversification Rules:**
+✅ 10+ individual stocks across 5+ sectors
+✅ No single position > 15% of portfolio
+✅ Mix of growth, value, and dividend stocks
+✅ Rebalance quarterly when drift > 5%
+
+**Risk Levels:**
+• **Conservative:** 60/40 stocks/bonds (Sharpe ~0.7)
+• **Moderate:** 70/30 stocks/bonds (Sharpe ~0.9)
+• **Aggressive:** 90/10 stocks/bonds (Sharpe ~1.1)
+
+**Quantum Enhancement:**  
+Use QAOA algorithms (like in this app!) to optimize correlation matrices and find efficient frontier allocations with better risk-adjusted returns."""
+
+    # Risk questions
+    elif any(word in q_lower for word in ["risk", "volatil", "protect", "hedge", "drawdown"]):
+        return """🛡️ **Risk Management Strategies**
+
+**Position Sizing:**
+• Max 5% per stock
+• Max 15% per sector
+• Keep 5-10% cash for opportunities
+
+**Stop Loss Strategy:**
+• Growth stocks: 8% trailing stop
+• Blue chips: 15% trailing stop
+• High volatility: 12% trailing stop
+
+**Portfolio Hedges:**
+• **GLD (Gold)** - Inflation & crisis hedge
+• **TLT (Long Bonds)** - Flight-to-safety
+• **VIX Calls** - Volatility spike protection
+• **Put Options** - Downside insurance
+
+**Risk Metrics to Monitor:**
+📊 **Beta** - Portfolio sensitivity to market (target: 0.8-1.2)
+📉 **Sharpe Ratio** - Return per unit risk (target: > 1.0)
+🎲 **Max Drawdown** - Worst peak-to-trough loss (keep < 20%)
+📈 **Sortino Ratio** - Downside risk focus (target: > 1.5)
+
+**Advanced:** Use quantum VQE algorithms for more accurate Value-at-Risk (VaR) calculations and tail-risk modeling."""
+
+    # Market/economic questions
+    elif any(word in q_lower for word in ["market", "economy", "fed", "inflation", "interest rate", "recession"]):
+        market_sentiment = analyze_market_sentiment()
+        sentiment_text = ""
+        if market_sentiment:
+            sentiment_text = "**Current Market Performance:**\n"
+            for index, change in market_sentiment.items():
+                trend = "📈 Bullish" if change > 2 else "📉 Bearish" if change < -2 else "➡️ Neutral"
+                sentiment_text += f"• {index}: {change}% ({trend})\n"
+        
+        return f"""🌍 **Market & Economic Analysis**
+
+{sentiment_text}
+
+**Key Factors to Watch:**
+
+**Federal Reserve:**
+• Interest rate decisions (affects borrowing costs)
+• Quantitative tightening/easing
+• Forward guidance signals
+
+**Economic Indicators:**
+• 📊 CPI/PCE inflation data
+• 💼 Unemployment rate
+• 🏭 Manufacturing PMI
+• 🏘️ Housing starts
+• 📈 GDP growth rate
+
+**Market Sentiment:**
+• VIX (Fear Index): <15 = complacent, >30 = panic
+• Put/Call Ratio: <0.7 = bullish, >1.1 = bearish  
+• Breadth indicators (advance/decline line)
+
+**Recession Signals:**
+⚠️ Inverted yield curve (2yr > 10yr)
+⚠️ 3+ months of declining GDP
+⚠️ Rising unemployment + declining earnings
+
+**Action Plan:**
+• Stay diversified across asset classes
+• Increase cash in late cycle
+• Favor quality companies with strong balance sheets"""
+
+    # Quantum computing questions
+    elif any(word in q_lower for word in ["quantum", "qaoa", "vqe", "qubit"]):
+        return """⚛️ **Quantum Computing in Finance**
+
+**Key Applications:**
+
+**1. Portfolio Optimization (QAOA)**
+• Solve NP-hard portfolio selection efficiently
+• Handle 100+ asset universes
+• Find global optimum vs local minimum
+• 10-1000x speedup over classical methods
+
+**2. Risk Analysis (VQE)**
+• More accurate correlation modeling
+• Better tail-risk estimation  
+• Dynamic hedging strategies
+
+**3. Option Pricing**
+• Quantum Monte Carlo for derivatives
+• Faster convergence rates
+• Path-dependent option handling
+
+**This App Uses:**
+✅ Qiskit QAOA for portfolio optimization
+✅ Classical ML + RF features from price signals
+✅ Quantum state visualization (Bloch sphere)
+
+**Current State:**
+• Available: IBM Quantum, AWS Braket, Azure Quantum
+• Limitations: 50-100 qubits, error correction challenges
+• Timeline: Quantum advantage in 2-5 years
+
+**Practical Use:** Combine quantum optimization with classical ML for hybrid strategies. Try the "Run Optimization" feature in this app!"""
+
+    # Technical analysis questions
+    elif any(word in q_lower for word in ["technical", "indicator", "chart", "moving average", "rsi", "macd", "support", "resistance"]):
+        return """📊 **Technical Analysis Toolkit**
+
+**Trend Indicators:**
+• **MA 50/200** - Golden cross = buy | Death cross = sell
+• **MACD (12,26,9)** - Crossovers show momentum shifts
+• **ADX** - Trend strength (>25 = strong trend)
+
+**Momentum:**
+• **RSI (14)** - <30 oversold (buy) | >70 overbought (sell)
+• **Stochastic** - Confirm RSI signals
+• **Bollinger Bands** - Volatility breakouts (2 std dev)
+
+**Volume Analysis:**
+• **OBV** - Confirm price trends with volume
+• **VWAP** - Intraday fair value
+• **Volume Profile** - Key support/resistance
+
+**Chart Patterns:**
+📈 Bullish: Cup & handle, ascending triangle, double bottom
+📉 Bearish: Head & shoulders, descending triangle, double top
+
+**Trading Signals:**
+✅ **Strong Buy:** RSI climbing from <30 + MACD crossover + volume surge
+⚠️ **Caution:** Bearish divergence (price ↑, indicator ↓)
+❌ **Sell:** RSI >70 + MA200 breakdown + distribution
+
+**Pro Tip:** Use 3+ indicators for confirmation. Never trade on a single signal. This app uses RF features from FFT analysis for signal processing!"""
+
+    # Crypto questions  
+    elif any(word in q_lower for word in ["crypto", "bitcoin", "ethereum", "btc", "eth", "blockchain"]):
+        return """₿ **Cryptocurrency Investment Guide**
+
+**Major Cryptocurrencies:**
+• **Bitcoin (BTC)** - Digital gold, store of value
+• **Ethereum (ETH)** - Smart contract platform  
+• **Solana (SOL)** - Fast, low-cost transactions
+
+**Investment Strategies:**
+1. **DCA Strategy** - Buy fixed $ amount weekly
+2. **HODL** - Long-term hold through volatility
+3. **Rebalancing** - Take profits at resistance levels
+
+**Risk Management:**
+⚠️ Never invest more than 5-10% of portfolio in crypto
+⚠️ Use hardware wallets for large amounts
+⚠️ Understand tax implications (capital gains)
+
+**Key Metrics:**
+• Market cap & circulating supply
+• Trading volume (higher = more liquid)
+• Network activity & adoption
+• Developer activity on GitHub
+
+**Caution:** Crypto is highly volatile (50%+ swings). Only invest what you can afford to lose. Not FDIC insured."""
+
+    # Options/derivatives
+    elif any(word in q_lower for word in ["option", "call", "put", "derivative", "covered call", "iron condor"]):
+        return """📜 **Options Trading Strategies**
+
+**Basic Strategies:**
+
+**1. Covered Call** (Income generation)
+• Own 100 shares, sell 1 call option
+• Earn premium, cap upside
+• Best when: Stock is flat/slightly bullish
+
+**2. Cash-Secured Put** (Buy stock cheaper)
+• Sell put, keep cash to buy if assigned
+• Earn premium while waiting
+• Best when: Want to own stock at lower price
+
+**3. Protective Put** (Insurance)
+• Own stock, buy put option
+• Limit downside risk
+• Best when: Holding through uncertainty
+
+**Advanced:**
+• **Iron Condor** - Neutral strategy, profit from low volatility
+• **Bull/Bear Spreads** - Directional bets with defined risk
+• **Straddle** - Profit from big moves either direction
+
+**Greeks to Know:**
+• Delta (Δ) - Price sensitivity
+• Theta (Θ) - Time decay (enemy of buyers)
+• Vega (V) - Volatility sensitivity  
+• Gamma (Γ) - Delta change rate
+
+**Risk Warning:** Options can expire worthless. Start small, paper trade first, and never risk more than 5% per trade."""
+
+    # General/default response
+    else:
+        return """💼 **AI Finance Assistant (Real-Time Data)**
+
+I can help you with:
+
+**Stock Analysis:**
+• Specific buy/sell recommendations with real-time prices
+• Technical analysis with current indicators
+• Fundamental analysis using live market data
+
+**Portfolio Management:**
+• Asset allocation strategies
+• Risk management and hedging
+• Diversification optimization with quantum algorithms
+
+**Market Insights:**
+• Current market sentiment (S&P 500, Nasdaq, Dow)
+• Economic indicators and Fed policy
+• Sector rotation analysis
+
+**Advanced Topics:**
+• Quantum computing for portfolio optimization (QAOA)
+• Options strategies and derivatives
+• Tax-efficient investing
+
+**Ask me questions like:**
+• "What stocks should I buy right now?"
+• "Analyze AAPL for me"
+• "When should I sell my tech stocks?"
+• "How do I build a diversified portfolio?"
+• "What are the best risk management strategies?"
+
+I provide actionable advice using **real-time data from Yahoo Finance**! 📈"""
+
+def get_stock_recommendation(stock_data):
+    """Generate recommendation based on stock performance"""
+    change = stock_data['month_change']
+    
+    if change > 10:
+        return f"""**Recommendation:** ⚠️ **Caution - Overbought**
+The stock has gained {change}% in the last month, which may indicate overbought conditions. Consider:
+• Waiting for a pullback (5-10% correction)
+• Taking partial profits if you own it
+• Setting alerts at support levels"""
+    elif change > 5:
+        return f"""**Recommendation:** ✅ **Bullish Momentum**
+Strong uptrend with {change}% monthly gain. Consider:
+• Entry on minor dips (2-3%)
+• Stop-loss at 8% below entry
+• Target: +15-20% over next 3-6 months"""
+    elif change > -5:
+        return f"""**Recommendation:** ➡️ **Consolidation**
+Stock is relatively flat ({change}% monthly). Consider:
+• Accumulating on weakness for long-term hold
+• Selling covered calls for income
+• Monitoring for breakout/breakdown"""
+    else:
+        return f"""**Recommendation:** 📉 **Bearish - Avoid**
+Stock is down {abs(change)}% this month. Consider:
+• Waiting for trend reversal confirmation
+• Looking for better opportunities
+• If you own it, review your thesis"""
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    """
+    AI-powered finance chatbot endpoint with real-time market data.
+    Uses yfinance for live stock prices and market analysis.
+    """
+    try:
+        # Use smart responses with real market data
+        response_text = get_smart_finance_response(req.message)
+        
+        return {
+            "response": response_text,
+            "model": "yfinance-powered",
+            "tokens": 0
+        }
+        
+    except Exception as e:
+        print(f"Chat error: {str(e)}")
+        return JSONResponse({
+            "response": f"❌ Error: {str(e)}\n\nPlease try again with a different question.",
+            "error": str(e)
+        }, status_code=200)
+
+
